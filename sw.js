@@ -1,5 +1,7 @@
 // Garde l'appli et le moteur vidéo en mémoire pour qu'elle marche hors ligne.
-const CACHE = "ia-montage-v2";
+// L'interface (html/css/js de l'appli) est prise en ligne en priorité → les mises à jour arrivent toutes seules.
+// Le moteur vidéo (lib/, 32 Mo) reste en cache → pas re-téléchargé.
+const CACHE = "ia-montage-v3";
 const FICHIERS = [
   "./", "index.html", "style.css", "app.js", "manifest.json", "icon-512.png",
   "lib/ffmpeg/index.js", "lib/ffmpeg/classes.js", "lib/ffmpeg/const.js", "lib/ffmpeg/errors.js",
@@ -16,16 +18,23 @@ self.addEventListener("activate", (e) => {
     .then(() => self.clients.claim()));
 });
 
+const garder = (req, r) => {
+  if (r && r.ok) { const copie = r.clone(); caches.open(CACHE).then((c) => c.put(req, copie)); }
+  return r;
+};
+
 self.addEventListener("fetch", (e) => {
-  if (e.request.method !== "GET") return;
-  e.respondWith(
-    caches.match(e.request).then((hit) => hit || fetch(e.request).then((r) => {
-      // garde aussi le modèle de détourage une fois téléchargé
-      if (r.ok && (e.request.url.startsWith(self.location.origin) || /jsdelivr|staticimgly/.test(e.request.url))) {
-        const copie = r.clone();
-        caches.open(CACHE).then((c) => c.put(e.request, copie));
-      }
-      return r;
-    }))
-  );
+  const req = e.request;
+  if (req.method !== "GET") return;
+  const url = new URL(req.url);
+  const memeSite = url.origin === self.location.origin;
+  const lourd = memeSite && url.pathname.includes("/lib/");
+  if (memeSite && !lourd) {
+    // réseau d'abord, cache si hors ligne
+    e.respondWith(fetch(req).then((r) => garder(req, r)).catch(() => caches.match(req, { ignoreSearch: true })));
+    return;
+  }
+  // moteur + modèle de détourage : cache d'abord
+  e.respondWith(caches.match(req).then((hit) => hit || fetch(req).then((r) =>
+    (lourd || /jsdelivr|staticimgly/.test(req.url)) ? garder(req, r) : r)));
 });

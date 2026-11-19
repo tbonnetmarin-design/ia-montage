@@ -19,7 +19,15 @@ const ACTIONS = {
     { id: "tiktok", titre: "Format TikTok", desc: "Vertical 9:16, fond flou" },
     { id: "fond", titre: "Enlever le fond", desc: "PNG détouré (internet la 1re fois)" },
     { id: "accroche", titre: "Texte d'accroche", desc: "Gros texte en haut" },
+    { id: "filtre", titre: "Filtres", desc: "N&B, vintage, vif…" },
+    { id: "rotation", titre: "Tourner / miroir", desc: "90°, 180°, miroir" },
     { id: "compresser", titre: "Alléger", desc: "Fichier plus léger" },
+  ],
+  photos: [
+    { id: "diaporama", titre: "Diaporama", desc: "Vidéo TikTok avec tes photos" },
+  ],
+  videos: [
+    { id: "assembler", titre: "Assembler", desc: "Mettre les vidéos bout à bout" },
   ],
   video: [
     { id: "tiktok", titre: "Format TikTok", desc: "Vertical 9:16, fond flou" },
@@ -27,26 +35,57 @@ const ACTIONS = {
     { id: "blancs", titre: "Couper les blancs", desc: "Enlève les silences" },
     { id: "accroche", titre: "Texte d'accroche", desc: "Gros texte en haut" },
     { id: "musique", titre: "Ajouter une musique", desc: "Musique de fond" },
+    { id: "vitesse", titre: "Vitesse", desc: "Ralenti ou accéléré" },
+    { id: "filtre", titre: "Filtres", desc: "N&B, vintage, vif…" },
+    { id: "rotation", titre: "Tourner / miroir", desc: "90°, 180°, miroir" },
+    { id: "son", titre: "Son", desc: "Couper le son / garder l'audio" },
+    { id: "inverser", titre: "Rembobiner", desc: "Lecture à l'envers (10 s)" },
     { id: "compresser", titre: "Alléger", desc: "Vidéo plus légère" },
     { id: "gif", titre: "En GIF", desc: "15 s max" },
   ],
 };
 
 const estVideo = (f) => f && f.type.startsWith("video");
+let fichiers = [];       // tous les fichiers choisis (assembler / diaporama)
+
+const FILTRES = {
+  vif:      { nom: "Vif",            ff: "eq=saturation=1.45:contrast=1.08",           css: "saturate(1.45) contrast(1.08)" },
+  nb:       { nom: "Noir & blanc",   ff: "hue=s=0,eq=contrast=1.1",                    css: "grayscale(1) contrast(1.1)" },
+  vintage:  { nom: "Vintage",        ff: "curves=preset=vintage",                      css: "sepia(0.45) contrast(1.05) saturate(0.9)" },
+  chaud:    { nom: "Chaud (été)",    ff: "colorbalance=rs=0.12:gs=0.03:bs=-0.12",     css: "sepia(0.2) saturate(1.25) hue-rotate(-8deg)" },
+  froid:    { nom: "Froid (hiver)",  ff: "colorbalance=rs=-0.1:bs=0.14",              css: "saturate(1.1) hue-rotate(12deg) brightness(1.03)" },
+  lumineux: { nom: "Plus lumineux",  ff: "eq=brightness=0.07:contrast=1.06",          css: "brightness(1.15) contrast(1.05)" },
+  cine:     { nom: "Cinéma",         ff: "eq=contrast=1.15:saturation=0.85,vignette", css: "contrast(1.15) saturate(0.85)" },
+};
+
+function choix(id, titre, options, defaut) {
+  return `<label>${titre}<select id="${id}" class="select">${options.map(([v, t]) =>
+    `<option value="${v}"${v === defaut ? " selected" : ""}>${t}</option>`).join("")}</select></label>`;
+}
 
 // ---------- étape 1 : choix du fichier ----------
 $("#fichier").addEventListener("change", (e) => {
-  const f = e.target.files[0];
-  if (f) chargerEntree(f);
+  const fs = [...e.target.files];
+  if (fs.length) chargerEntree(fs);
   e.target.value = "";
 });
 
-function chargerEntree(f) {
+function chargerEntree(entree) {
+  fichiers = Array.isArray(entree) ? entree : [entree];
+  const f = fichiers[0];
   fichier = f;
   resultat = null;
   actionChoisie = null;
-  afficherApercu($("#apercu-entree"), f);
-  const liste = ACTIONS[estVideo(f) ? "video" : "photo"];
+  let liste;
+  if (fichiers.length > 1) {
+    const tousVideos = fichiers.every(estVideo), toutesPhotos = fichiers.every((x) => !estVideo(x));
+    liste = tousVideos ? ACTIONS.videos : toutesPhotos ? ACTIONS.photos : [];
+    $("#apercu-entree").innerHTML = `<div class="info">${fichiers.length} fichiers choisis${liste.length ? "" :
+      " — mélange photos + vidéos impossible, choisis que des photos ou que des vidéos"}</div>`;
+  } else {
+    afficherApercu($("#apercu-entree"), f);
+    liste = ACTIONS[estVideo(f) ? "video" : "photo"];
+  }
   $("#actions").innerHTML = "";
   for (const a of liste) {
     const b = document.createElement("button");
@@ -65,7 +104,9 @@ function chargerEntree(f) {
 function afficherApercu(zone, blob, transparent = false) {
   const url = URL.createObjectURL(blob);
   const taille = (blob.size / 1024 / 1024).toFixed(1) + " Mo";
-  if (blob.type.startsWith("video")) {
+  if (blob.type.startsWith("audio")) {
+    zone.innerHTML = `<audio src="${url}" controls style="width:100%"></audio><div class="info">${taille}</div>`;
+  } else if (blob.type.startsWith("video")) {
     zone.innerHTML = `<video src="${url}" controls playsinline></video><div class="info">${taille}</div>`;
   } else {
     zone.innerHTML = `<img src="${url}" class="${transparent ? "damier" : ""}" alt=""><div class="info">${taille}</div>`;
@@ -95,6 +136,17 @@ function choisirAction(id, bouton) {
       <label>Volume de la musique : <span id="o-vol-val">25</span> %<input id="o-vol" type="range" min="5" max="100" value="25"></label>`;
     $("#o-son").onchange = (e) => ($("#o-son-nom").textContent = e.target.files[0] ? "✓ " + e.target.files[0].name : "");
     $("#o-vol").oninput = (e) => ($("#o-vol-val").textContent = e.target.value);
+  } else if (id === "vitesse") {
+    o.innerHTML = choix("o-vitesse", "Vitesse", [["0.5", "Ralenti ×0,5"], ["0.75", "×0,75"], ["1.5", "Accéléré ×1,5"], ["2", "×2"], ["3", "×3"]], "2");
+  } else if (id === "filtre") {
+    o.innerHTML = choix("o-filtre", "Filtre", Object.entries(FILTRES).map(([k, v]) => [k, v.nom]), "vif");
+  } else if (id === "rotation") {
+    o.innerHTML = choix("o-rot", "Sens", [["droite", "↻ 90° à droite"], ["gauche", "↺ 90° à gauche"], ["180", "180°"], ["miroir", "⇋ Miroir"]], "droite");
+  } else if (id === "son") {
+    o.innerHTML = choix("o-son-mode", "Quoi ?", [["muet", "Couper le son de la vidéo"], ["audio", "Garder seulement le son (fichier audio)"]], "muet");
+  } else if (id === "diaporama") {
+    o.innerHTML = `<label>Durée de chaque photo (secondes)<input id="o-par" type="number" inputmode="decimal" value="2.5" min="0.5" step="0.5"></label>
+      <div class="info">Astuce : ensuite « Continuer à modifier » → « Ajouter une musique ».</div>`;
   }
   $("#carte-go").hidden = false;
 }
@@ -152,8 +204,23 @@ function nomSortie(suffixe, ext) {
 }
 
 async function executer(action, f) {
+  if (action === "diaporama") return diaporama(fichiers);
+  if (action === "assembler") return assembler(fichiers);
   if (!estVideo(f)) return executerPhoto(action, f);
   return executerVideo(action, f);
+}
+
+function canvasTikTok(img) {
+  const c = document.createElement("canvas");
+  const ctx = c.getContext("2d");
+  c.width = 1080; c.height = 1920;
+  const sCover = Math.max(1080 / img.width, 1920 / img.height);
+  ctx.filter = "blur(40px)";
+  ctx.drawImage(img, (1080 - img.width * sCover) / 2, (1920 - img.height * sCover) / 2, img.width * sCover, img.height * sCover);
+  ctx.filter = "none";
+  const s = Math.min(1080 / img.width, 1920 / img.height);
+  ctx.drawImage(img, (1080 - img.width * s) / 2, (1920 - img.height * s) / 2, img.width * s, img.height * s);
+  return c;
 }
 
 // ===== PHOTOS (canvas) =====
@@ -206,14 +273,33 @@ async function executerPhoto(action, f) {
   const c = document.createElement("canvas");
   const ctx = c.getContext("2d");
   if (action === "tiktok") {
-    c.width = 1080; c.height = 1920;
-    const sCover = Math.max(1080 / img.width, 1920 / img.height);
-    ctx.filter = "blur(40px)";
-    ctx.drawImage(img, (1080 - img.width * sCover) / 2, (1920 - img.height * sCover) / 2, img.width * sCover, img.height * sCover);
+    return { blob: await canvasEnBlob(canvasTikTok(img), "image/jpeg", 0.92), nom: nomSortie("tiktok", "jpg") };
+  }
+  if (action === "filtre") {
+    const k = $("#o-filtre").value;
+    c.width = img.width; c.height = img.height;
+    ctx.filter = FILTRES[k].css;
+    ctx.drawImage(img, 0, 0);
     ctx.filter = "none";
-    const s = Math.min(1080 / img.width, 1920 / img.height);
-    ctx.drawImage(img, (1080 - img.width * s) / 2, (1920 - img.height * s) / 2, img.width * s, img.height * s);
-    return { blob: await canvasEnBlob(c, "image/jpeg", 0.92), nom: nomSortie("tiktok", "jpg") };
+    if (k === "cine") { // vignette douce
+      const g = ctx.createRadialGradient(c.width / 2, c.height / 2, Math.min(c.width, c.height) * 0.35,
+        c.width / 2, c.height / 2, Math.max(c.width, c.height) * 0.75);
+      g.addColorStop(0, "rgba(0,0,0,0)"); g.addColorStop(1, "rgba(0,0,0,0.45)");
+      ctx.fillStyle = g; ctx.fillRect(0, 0, c.width, c.height);
+    }
+    return { blob: await canvasEnBlob(c, "image/jpeg", 0.92), nom: nomSortie("filtre-" + k, "jpg") };
+  }
+  if (action === "rotation") {
+    const r = $("#o-rot").value;
+    const quart = r === "droite" || r === "gauche";
+    c.width = quart ? img.height : img.width; c.height = quart ? img.width : img.height;
+    ctx.translate(c.width / 2, c.height / 2);
+    if (r === "droite") ctx.rotate(Math.PI / 2);
+    else if (r === "gauche") ctx.rotate(-Math.PI / 2);
+    else if (r === "180") ctx.rotate(Math.PI);
+    else ctx.scale(-1, 1);
+    ctx.drawImage(img, -img.width / 2, -img.height / 2);
+    return { blob: await canvasEnBlob(c, "image/jpeg", 0.95), nom: nomSortie("tournee", "jpg") };
   }
   if (action === "accroche") {
     const texte = ($("#o-texte")?.value || "").trim();
@@ -343,6 +429,41 @@ async function executerVideo(action, f) {
       : `[1:a]volume=${Math.max(vol, 0.8)},${fondu}[a]`;
     args = ["-i", entree, "-stream_loop", "-1", "-i", "son." + extSon, "-filter_complex", filtre,
       "-map", "0:v", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", "-b:a", "160k", "-t", info.duree.toFixed(2), sortie];
+  } else if (action === "vitesse") {
+    const v = parseFloat($("#o-vitesse").value) || 2;
+    const atempo = [];
+    let reste = v;
+    while (reste > 2) { atempo.push("atempo=2"); reste /= 2; }
+    while (reste < 0.5) { atempo.push("atempo=0.5"); reste /= 0.5; }
+    atempo.push(`atempo=${reste.toFixed(4)}`);
+    args = ["-i", entree, "-vf", `setpts=PTS/${v}`, ...X264];
+    if (info.son) args.push("-af", atempo.join(","), "-c:a", "aac", "-b:a", "128k");
+    else args.push("-an");
+    args.push(sortie);
+    suffixe = "x" + v;
+  } else if (action === "filtre") {
+    const k = $("#o-filtre").value;
+    args = ["-i", entree, "-vf", FILTRES[k].ff, ...X264, "-c:a", "copy", sortie];
+    suffixe = "filtre-" + k;
+  } else if (action === "rotation") {
+    const r = $("#o-rot").value;
+    const vf = { droite: "transpose=1", gauche: "transpose=2", "180": "transpose=1,transpose=1", miroir: "hflip" }[r];
+    args = ["-i", entree, "-vf", vf, ...X264, "-c:a", "copy", sortie];
+    suffixe = "tournee";
+  } else if (action === "son") {
+    if ($("#o-son-mode").value === "audio") {
+      if (!info.son) throw new Error("Cette vidéo n'a pas de son.");
+      sortie = "sortie.m4a"; type = "audio/mp4"; suffixe = "audio";
+      args = ["-i", entree, "-vn", "-c:a", "aac", "-b:a", "192k", sortie];
+    } else {
+      args = ["-i", entree, "-an", "-c:v", "copy", sortie];
+      suffixe = "muet";
+    }
+  } else if (action === "inverser") {
+    args = ["-t", "10", "-i", entree, "-vf", "reverse", ...X264];
+    if (info.son) args.push("-af", "areverse", "-c:a", "aac"); else args.push("-an");
+    args.push(sortie);
+    suffixe = "rembobine";
   } else {
     throw new Error("Action inconnue");
   }
@@ -360,4 +481,71 @@ async function executerVideo(action, f) {
   for (const n of [...fichiersTemp, sortie]) { try { await ffmpeg.deleteFile(n); } catch {} }
   const ext2 = sortie.split(".").pop();
   return { blob: new Blob([data.buffer], { type }), nom: nomSortie(suffixe, ext2) };
+}
+
+// ===== PLUSIEURS FICHIERS =====
+async function lancerFF(args, sortie, temp) {
+  logs = [];
+  const code = await ffmpeg.exec(args);
+  if (code !== 0) {
+    console.warn(logs.slice(-20).join("\n"));
+    try { ffmpeg.terminate(); } catch {}
+    ffmpeg = null;
+    throw new Error("Le montage a échoué. Essaie avec moins de fichiers ou des vidéos plus courtes.");
+  }
+  const data = await ffmpeg.readFile(sortie);
+  for (const n of [...temp, sortie]) { try { await ffmpeg.deleteFile(n); } catch {} }
+  return data;
+}
+
+async function diaporama(liste) {
+  await chargerFFmpeg();
+  const par = Math.max(0.5, parseFloat($("#o-par")?.value) || 2.5);
+  const temp = [];
+  for (let i = 0; i < liste.length; i++) {
+    progres(0.05 + 0.3 * (i / liste.length), `Préparation des photos… ${i + 1}/${liste.length}`);
+    const c = canvasTikTok(await chargerImage(liste[i]));
+    const n = `img${String(i + 1).padStart(3, "0")}.jpg`;
+    await ffmpeg.writeFile(n, new Uint8Array(await (await canvasEnBlob(c, "image/jpeg", 0.9)).arrayBuffer()));
+    temp.push(n);
+  }
+  progres(0.4, "Création de la vidéo…");
+  const data = await lancerFF(["-framerate", `1/${par}`, "-i", "img%03d.jpg", "-vf", "scale=1080:1920,fps=30",
+    ...X264, "sortie.mp4"], "sortie.mp4", temp);
+  return { blob: new Blob([data.buffer], { type: "video/mp4" }), nom: nomSortie("diaporama", "mp4") };
+}
+
+async function assembler(liste) {
+  await chargerFFmpeg();
+  const temp = [], infosV = [];
+  for (let i = 0; i < liste.length; i++) {
+    progres(0.03 + 0.1 * (i / liste.length), `Lecture des vidéos… ${i + 1}/${liste.length}`);
+    const ext = (liste[i].name.match(/\.([^.]+)$/) || [, "mp4"])[1].toLowerCase();
+    const n = `v${i}.${ext}`;
+    await ffmpeg.writeFile(n, await lireFichier(liste[i]));
+    temp.push(n);
+    infosV.push(await infos(n));
+  }
+  // format de la 1re vidéo, en pair
+  let L = infosV[0].larg || 720, H = infosV[0].haut || 1280;
+  const s = Math.min(1, 1280 / Math.max(L, H));
+  L = Math.round((L * s) / 2) * 2; H = Math.round((H * s) / 2) * 2;
+  const args = [];
+  temp.forEach((n) => args.push("-i", n));
+  let parts = "", entrees = "", silence = liste.length;
+  infosV.forEach((inf, i) => {
+    parts += `[${i}:v]scale=${L}:${H}:force_original_aspect_ratio=decrease,pad=${L}:${H}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30,format=yuv420p[v${i}];`;
+    if (inf.son) parts += `[${i}:a]aformat=sample_rates=44100:channel_layouts=stereo[a${i}];`;
+    else {
+      args.push("-f", "lavfi", "-t", inf.duree.toFixed(2), "-i", "anullsrc=r=44100:cl=stereo");
+      parts += `[${silence}:a]aformat=sample_rates=44100:channel_layouts=stereo[a${i}];`;
+      silence++;
+    }
+    entrees += `[v${i}][a${i}]`;
+  });
+  const filtre = parts + `${entrees}concat=n=${liste.length}:v=1:a=1[v][a]`;
+  progres(0.15, "Assemblage…");
+  const data = await lancerFF([...args, "-filter_complex", filtre, "-map", "[v]", "-map", "[a]", ...X264,
+    "-c:a", "aac", "-b:a", "128k", "sortie.mp4"], "sortie.mp4", temp);
+  return { blob: new Blob([data.buffer], { type: "video/mp4" }), nom: nomSortie("assemblage", "mp4") };
 }

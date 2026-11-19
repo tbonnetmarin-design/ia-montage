@@ -34,6 +34,9 @@ h2 { font-size: 17px; margin: 0 0 12px; display: flex; align-items: center; gap:
 #options label { display: grid; gap: 4px; font-size: 14px; color: var(--gris); }
 #options input[type=text], #options input[type=number] { font: inherit; padding: 10px 12px; border-radius: 10px;
   border: 1px solid var(--bord); background: var(--fond); color: var(--texte); width: 100%; }
+#options select { font: inherit; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--bord);
+  background: var(--fond); color: var(--texte); width: 100%; }
+#options .info { font-size: 13px; color: var(--gris); }
 #options input[type=range] { width: 100%; accent-color: var(--accent); }
 .apercu:not(:empty) { margin-top: 12px; }
 .apercu img, .apercu video { width: 100%; max-height: 52vh; object-fit: contain; border-radius: 12px; background: #0001; }
@@ -41,5 +44,6 @@ h2 { font-size: 17px; margin: 0 0 12px; display: flex; align-items: center; gap:
 .barre { height: 8px; background: var(--bord); border-radius: 8px; overflow: hidden; margin-top: 14px; }
 #barre-int { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
 #statut { font-size: 14px; color: var(--gris); margin: 8px 0 0; }
+.astuce { font-size: 12px; color: var(--gris); margin: 8px 0 0; text-align: center; }
 .aide { text-align: center; color: var(--gris); font-size: 13px; margin-top: 24px; }
 .damier { background: repeating-conic-gradient(#ccc 0 25%, #fff 0 50%) 0 0 / 16px 16px; }
