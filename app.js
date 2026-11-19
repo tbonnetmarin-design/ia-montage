@@ -603,6 +603,7 @@ Règles :
 - Pour une photo (jpg/png) : sortie jpg ou png avec "-frames:v","1" (et "-q:v","2" pour un jpg de bonne qualité).
 - Vidéos longues : c'est lent sur téléphone (environ 2 à 4 fois la durée de la vidéo par passe) → fais TOUT en une seule étape ffmpeg dès que possible (un seul -filter_complex).
 - Garde le minimum d'étapes ; une seule étape ffmpeg avec plusieurs filtres est préférable quand c'est simple.
+- IMPORTANT : ffmpeg ne fait que du montage (couper, vitesse, couleurs, cadrage, texte, son, effets simples). Il ne peut PAS générer ou transformer le contenu de l'image : changer une coupe de cheveux, un visage, des vêtements, ajouter/enlever un objet ou une personne, changer le décor, animer une photo, etc. Pour ce genre de demande, ne renvoie JAMAIS une copie de la vidéo : mets "etapes": [] et explique dans "resume" que l'appli ne peut pas le faire, en proposant une alternative (effet/filtre dans Snapchat, TikTok, CapCut ou l'appli Gemini).
 - Si une demande a besoin d'un fichier non fourni (ex. une musique précise), ne l'invente pas : fais le reste et dis-le dans "resume" (l'utilisateur peut utiliser le bouton « Ajouter une musique »).
 - Réponds uniquement avec le JSON, sans texte autour.`;
 
@@ -799,7 +800,7 @@ $("#faire").addEventListener("click", async () => {
     progres(0.12, lireCle() ? "🧠 Je réfléchis à ta demande…" : "Je lis ta demande…");
     let plan = lireCle() ? await planGemini(demande, contexte) : planLocal(demande, info);
     $("#journal").textContent = "💬 " + (plan.resume || "");
-    if (!plan.etapes.length) { progres(0, "Rien à faire pour cette demande."); return; }
+    if (!plan.etapes.length) { progres(0, "Rien à faire pour cette demande — lis l'explication ci-dessous."); return; }
     try {
       resultat = await executerPlan(plan);
     } catch (err) {

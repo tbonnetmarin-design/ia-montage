@@ -1,7 +1,7 @@
 // Garde l'appli et le moteur vidéo en mémoire pour qu'elle marche hors ligne.
 // L'interface (html/css/js de l'appli) est prise en ligne en priorité → les mises à jour arrivent toutes seules.
 // Le moteur vidéo (lib/, 32 Mo) reste en cache → pas re-téléchargé.
-const CACHE = "ia-montage-v4";
+const CACHE = "ia-montage-v5";
 const FICHIERS = [
   "./", "index.html", "style.css", "app.js", "manifest.json", "icon-512.png",
   "lib/ffmpeg/index.js", "lib/ffmpeg/classes.js", "lib/ffmpeg/const.js", "lib/ffmpeg/errors.js",
