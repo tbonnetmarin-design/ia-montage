@@ -233,7 +233,7 @@ function canvasEnBlob(c, type = "image/png", q) {
   return new Promise((ok) => c.toBlob(ok, type, q));
 }
 
-function dessinerAccroche(ctx, larg, haut, texte) {
+function dessinerAccroche(ctx, larg, haut, texte, position = "haut") {
   const taille = Math.max(18, Math.round(Math.min(haut / 16, larg / 11)));
   ctx.font = `800 ${taille}px -apple-system, "Segoe UI", Arial, sans-serif`;
   const max = larg * 0.88;
@@ -248,7 +248,7 @@ function dessinerAccroche(ctx, larg, haut, texte) {
   const interligne = taille * 1.25, pad = taille * 0.5;
   const largBoite = Math.min(larg, Math.max(...lignes.map((l) => ctx.measureText(l).width)) + pad * 2);
   const hautBoite = lignes.length * interligne + pad * 1.4;
-  const y0 = haut * 0.08;
+  const y0 = position === "bas" ? haut * 0.80 - hautBoite : position === "milieu" ? (haut - hautBoite) / 2 : haut * 0.08;
   ctx.fillStyle = "rgba(0,0,0,0.65)";
   const x0 = (larg - largBoite) / 2;
   if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(x0, y0, largBoite, hautBoite, taille * 0.35); ctx.fill(); }
@@ -357,9 +357,20 @@ const X264 = ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "23", "-pix_fmt
 async function executerVideo(action, f) {
   await chargerFFmpeg();
   const ext = (f.name.match(/\.([^.]+)$/) || [, "mp4"])[1].toLowerCase();
-  const entree = "entree." + ext;
   progres(0.05, "Lecture de la vidéo…");
-  await ffmpeg.writeFile(entree, await lireFichier(f));
+  // la vidéo est lue directement depuis le téléphone (pas copiée en mémoire) → marche avec les longues vidéos
+  try { await ffmpeg.createDir("/in"); } catch {}
+  try { await ffmpeg.unmount("/in"); } catch {}
+  await ffmpeg.mount("WORKERFS", { files: [f] }, "/in");
+  const entree = "/in/" + f.name;
+  try {
+    return await executerVideoSuite(action, f, entree, ext);
+  } finally {
+    if (ffmpeg) { try { await ffmpeg.unmount("/in"); } catch {} }
+  }
+}
+
+async function executerVideoSuite(action, f, entree, ext) {
   const info = await infos(entree);
   progres(0.08, "Montage en cours…");
 
@@ -549,3 +560,268 @@ async function assembler(liste) {
     "-c:a", "aac", "-b:a", "128k", "sortie.mp4"], "sortie.mp4", temp);
   return { blob: new Blob([data.buffer], { type: "video/mp4" }), nom: nomSortie("assemblage", "mp4") };
 }
+
+// =====================================================================
+// ===== DEMANDE ÉCRITE : « écris ce que tu veux » =====================
+// =====================================================================
+const CLE_KEY = "ia-montage-cle-gemini";
+const MODELE = "gemini-flash-latest";
+const EXT_VIDEO = ["mp4", "mov", "m4v", "webm", "mkv", "avi", "3gp"];
+const extDe = (n) => (String(n).match(/\.([^.\/]+)$/) || [, ""])[1].toLowerCase();
+
+function lireCle() { try { return localStorage.getItem(CLE_KEY) || ""; } catch { return ""; } }
+function majModeIA() {
+  const ok = !!lireCle();
+  $("#mode-ia").textContent = ok
+    ? "🧠 Cerveau Gemini activé : écris ce que tu veux, comme tu veux."
+    : "Mode simple : coupe, vitesse, filtres, texte entre guillemets, TikTok, son, à l'envers, GIF… Pour TOUT comprendre, ajoute ta clé Gemini gratuite dans ⚙️ Réglages (en bas).";
+  $("#etat-cle").textContent = ok ? "✓ Clé enregistrée sur ce téléphone." : "Aucune clé enregistrée.";
+}
+$("#sauver-cle").addEventListener("click", () => {
+  const v = $("#cle").value.trim();
+  try { v ? localStorage.setItem(CLE_KEY, v) : localStorage.removeItem(CLE_KEY); } catch {}
+  $("#cle").value = "";
+  majModeIA();
+});
+majModeIA();
+
+const CONSIGNES = `Tu es le moteur de montage d'une appli d'édition vidéo/photo qui tourne sur iPhone avec ffmpeg.wasm (FFmpeg 5.1, un seul thread, mémoire limitée ~1,5 Go).
+L'utilisateur décrit en français ce qu'il veut. Tu réponds UNIQUEMENT avec un JSON :
+{"resume": "phrase courte en français qui dit ce que tu vas faire (tutoiement)",
+ "etapes": [ ... ]}
+Chaque étape est soit :
+ A) {"type":"ffmpeg","description":"…","args":[…],"ext":"mp4"}  — arguments ffmpeg SANS le mot "ffmpeg". Utilise "{in}" pour le fichier courant et "{out}" pour la sortie. Les fichiers d'origine sont aussi "{in1}", "{in2}"… (dans l'ordre donné). "ext" = extension de sortie (mp4, jpg, png, gif, m4a).
+ B) {"type":"texte","description":"…","texte":"…","position":"haut|milieu|bas","debut":0,"fin":null} — incruste un texte (blanc sur bandeau noir) ; fin null = jusqu'au bout. Emojis acceptés.
+Les étapes s'enchaînent : la sortie d'une étape devient le {in} de la suivante.
+Règles :
+- Vidéo : toujours "-c:v","libx264","-preset","ultrafast","-crf","23","-pix_fmt","yuv420p" et pour le son "-c:a","aac","-b:a","128k" (ou "-an" si pas de son). Sortie mp4.
+- Si la vidéo dure plus de 60 s ou fait plus de 1280 px, ajoute dans la 1re étape un scale pour que le plus grand côté fasse au plus 1280 px (pair) — ça évite de manquer de mémoire. Pour couper, mets "-ss" et "-to"/"-t" AVANT "-i" quand c'est possible.
+- PAS de drawtext, subtitles ni ass (aucune police installée) : utilise l'étape "texte".
+- Vitesse : setpts=PTS/X pour l'image et atempo (entre 0.5 et 2, à chaîner) pour le son.
+- Format TikTok : 1080x1920 (ou 720x1280 si vidéo longue) avec fond flou : [0:v]scale=…:force_original_aspect_ratio=increase,crop=…,boxblur=…[bg];[0:v]scale=…:force_original_aspect_ratio=decrease[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2
+- Filtres utilisables : eq, hue, curves, colorbalance, vignette, unsharp, boxblur, gblur, crop, pad, rotate, transpose, hflip, vflip, fade, afade, reverse, areverse, volume, loudnorm, select, aselect, silencedetect n'est pas utile ici, tpad, fps, zoompan, xfade, concat, lavfi color/anullsrc.
+- Pour une photo (jpg/png) : sortie jpg ou png avec "-frames:v","1" (et "-q:v","2" pour un jpg de bonne qualité).
+- Vidéos longues : c'est lent sur téléphone (environ 2 à 4 fois la durée de la vidéo par passe) → fais TOUT en une seule étape ffmpeg dès que possible (un seul -filter_complex).
+- Garde le minimum d'étapes ; une seule étape ffmpeg avec plusieurs filtres est préférable quand c'est simple.
+- Si une demande a besoin d'un fichier non fourni (ex. une musique précise), ne l'invente pas : fais le reste et dis-le dans "resume" (l'utilisateur peut utiliser le bouton « Ajouter une musique »).
+- Réponds uniquement avec le JSON, sans texte autour.`;
+
+async function planGemini(demande, contexte, erreur) {
+  const corps = {
+    systemInstruction: { parts: [{ text: CONSIGNES }] },
+    contents: [{ role: "user", parts: [{ text:
+      "Fichiers : " + JSON.stringify(contexte) + "\n\nDemande : " + demande +
+      (erreur ? "\n\nTon plan précédent a échoué. Erreur FFmpeg :\n" + erreur + "\nDonne un plan corrigé, plus simple." : "") }] }],
+    generationConfig: { responseMimeType: "application/json", temperature: 0.2 },
+  };
+  let r;
+  for (const m of [MODELE, "gemini-2.5-flash", "gemini-2.0-flash"]) {   // si un nom de modèle n'existe plus, on essaie le suivant
+    r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent`, {
+      method: "POST", headers: { "content-type": "application/json", "x-goog-api-key": lireCle() }, body: JSON.stringify(corps),
+    });
+    if (r.status !== 404) break;
+  }
+  if (!r.ok) {
+    const t = await r.text();
+    if (r.status === 400 || r.status === 403) throw new Error("Clé Gemini refusée : vérifie-la dans ⚙️ Réglages.");
+    if (r.status === 429) throw new Error("Limite gratuite Gemini atteinte pour l'instant : réessaie dans une minute.");
+    throw new Error("Gemini indisponible (" + r.status + ") " + t.slice(0, 120));
+  }
+  const j = await r.json();
+  const t = (j.candidates?.[0]?.content?.parts || []).map((p) => p.text || "").join("");
+  const plan = JSON.parse(t.replace(/^\s*```(?:json)?/, "").replace(/```\s*$/, ""));
+  if (!Array.isArray(plan.etapes)) throw new Error("Réponse de Gemini incompréhensible, reformule ta demande.");
+  return plan;
+}
+
+// --- mode simple (sans clé / sans internet) ---
+const enSec = (s) => { s = s.replace(",", "."); if (s.includes(":")) { const [m, x] = s.split(":"); return +m * 60 + +x; } return +s; };
+
+function planLocal(demande, info) {
+  const d = demande.toLowerCase();
+  const vid = info.video, son = info.son;
+  const V = ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "23", "-pix_fmt", "yuv420p"];
+  const A = son ? ["-c:a", "aac", "-b:a", "128k"] : ["-an"];
+  const etapes = [], fait = [];
+  const ff = (description, args, ext) => etapes.push({ type: "ffmpeg", description, args, ext: ext || (vid ? "mp4" : "jpg") });
+  const sortieImg = vid ? [] : ["-frames:v", "1", "-q:v", "2"];
+  const grand = vid && (info.duree > 60 || Math.max(info.larg, info.haut) > 1280);
+  const reduire = grand ? `scale='if(gt(iw,ih),min(1280,iw),-2)':'if(gt(iw,ih),-2,min(1280,ih))',` : "";
+
+  const coupe = d.match(/(?:coupe|garde|prends|de)\s*(?:de\s*|à partir de\s*)?(\d+(?:[:.,]\d+)?)\s*(?:s|sec|secondes)?\s*(?:à|a|-|jusqu'?à|jusqu'à)\s*(\d+(?:[:.,]\d+)?)/);
+  const filtresV = [], filtresA = [];
+  if (coupe && vid) fait.push(`je garde de ${coupe[1]} à ${coupe[2]}`);
+  let vitesse = null;
+  const mx = d.match(/(?:x|×|fois)\s*(\d+(?:[.,]\d+)?)|(\d+(?:[.,]\d+)?)\s*(?:x|×|fois)\b/);
+  if (/acc[ée]l|plus vite|speed/.test(d)) vitesse = mx ? enSec(mx[1] || mx[2]) : 2;
+  if (/ralenti|slow|moins vite/.test(d)) vitesse = mx ? Math.min(1, enSec(mx[1] || mx[2])) || 0.5 : 0.5;
+  if (vitesse && vid) {
+    filtresV.push(`setpts=PTS/${vitesse}`);
+    let r = vitesse; const at = [];
+    while (r > 2) { at.push("atempo=2"); r /= 2; }
+    while (r < 0.5) { at.push("atempo=0.5"); r /= 0.5; }
+    at.push(`atempo=${r.toFixed(4)}`);
+    if (son) filtresA.push(...at);
+    fait.push(`vitesse ×${vitesse}`);
+  }
+  const filtre = /noir et blanc|n&b|\bnb\b|black/.test(d) ? "nb" : /vintage|r[ée]tro/.test(d) ? "vintage" : /chaud|[ée]t[ée]/.test(d) ? "chaud"
+    : /froid|hiver/.test(d) ? "froid" : /lumin|[ée]clair/.test(d) ? "lumineux" : /cin[ée]/.test(d) ? "cine" : /vif|satur|couleurs?/.test(d) ? "vif" : null;
+  if (filtre) { filtresV.push(FILTRES[filtre].ff); fait.push("filtre " + FILTRES[filtre].nom); }
+  if (/miroir/.test(d)) { filtresV.push("hflip"); fait.push("miroir"); }
+  else if (/tourne|pivote|rotation/.test(d)) {
+    filtresV.push(/gauche/.test(d) ? "transpose=2" : /180|retourne/.test(d) ? "transpose=1,transpose=1" : "transpose=1");
+    fait.push("rotation");
+  }
+  if (/[àa] l'envers|rembobin|reverse/.test(d) && vid) { filtresV.push("reverse"); if (son) filtresA.push("areverse"); fait.push("à l'envers"); }
+  const tiktok = /tiktok|tik tok|vertical|9[:/]16|reels?|shorts?/.test(d);
+
+  const muet = /enl[eè]ve le son|sans (le )?son|muet|coupe le son|retire le son/.test(d) && vid;
+  if (filtresV.length || filtresA.length || (coupe && vid) || grand || tiktok) {
+    // tout en UNE seule passe (beaucoup plus rapide sur les longues vidéos)
+    const args = [];
+    if (coupe && vid) args.push("-ss", String(enSec(coupe[1])), "-to", String(enSec(coupe[2])));
+    args.push("-i", "{in}");
+    const pre = filtresV.join(",");
+    if (tiktok) {
+      const W = vid && (grand || info.duree > 30) ? 720 : 1080, H = W === 720 ? 1280 : 1920;
+      args.push("-filter_complex", `[0:v]${pre ? pre + "," : ""}split[s1][s2];` +
+        `[s1]scale=${W / 6}:${H / 6}:force_original_aspect_ratio=increase,crop=${W / 6}:${H / 6},boxblur=8:2,scale=${W}:${H}[bg];` +
+        `[s2]scale=${W}:${H}:force_original_aspect_ratio=decrease[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2[v]`, "-map", "[v]");
+      if (vid && son && !muet) args.push("-map", "0:a?");
+      fait.push("format TikTok");
+    } else if (pre || grand) {
+      args.push("-vf", (reduire + pre).replace(/,$/, ""));
+    }
+    if (filtresA.length && !muet) args.push("-af", filtresA.join(","));
+    args.push(...(vid ? [...V, ...(muet ? ["-an"] : A)] : sortieImg), "{out}");
+    if (muet) fait.push("sans le son");
+    ff(fait.join(", ") || "préparation", args);
+  } else if (muet) {
+    ff("sans le son", ["-i", "{in}", "-an", "-c:v", "copy", "{out}"]); fait.push("sans le son");
+  }
+  const txt = demande.match(/["“«]\s*([^"”»]+?)\s*["”»]/);
+  if (txt) {
+    const pendant = d.match(/pendant\s*(\d+(?:[.,]\d+)?)\s*(?:s|sec|secondes)/);
+    etapes.push({ type: "texte", description: `texte « ${txt[1]} »`, texte: txt[1],
+      position: /en bas|bas de/.test(d) ? "bas" : /milieu|centre/.test(d) ? "milieu" : "haut",
+      debut: 0, fin: pendant ? enSec(pendant[1]) : null });
+    fait.push(`texte « ${txt[1]} »`);
+  }
+  if (/all[eè]ge|compresse|moins lourd|plus l[ée]ger/.test(d)) {
+    ff("allégée", ["-i", "{in}", "-vf", "scale='min(720,iw)':-2", ...(vid ? ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "28", "-pix_fmt", "yuv420p", ...A] : ["-q:v", "5", ...sortieImg]), "{out}"], vid ? "mp4" : "jpg");
+    fait.push("allégée");
+  }
+  if (/\bgif\b/.test(d) && vid) {
+    ff("en GIF", ["-t", "15", "-i", "{in}", "-vf", "fps=12,scale=480:-1:flags=lanczos,split[a][b];[a]palettegen[p];[b][p]paletteuse", "{out}"], "gif");
+    fait.push("GIF");
+  }
+  return { resume: etapes.length ? "Je fais : " + fait.join(", ") + "." :
+    "Je n'ai pas compris en mode simple. Ajoute ta clé Gemini (⚙️ Réglages) pour que je comprenne tout, ou utilise les idées en dessous.", etapes };
+}
+
+// --- exécution d'un plan ---
+async function etapeTexte(courant, e, i) {
+  const inf = await infos(courant);
+  const c = document.createElement("canvas");
+  c.width = inf.larg || 1080; c.height = inf.haut || 1920;
+  dessinerAccroche(c.getContext("2d"), c.width, c.height, String(e.texte || ""), e.position || "haut");
+  const png = `/t${i}.png`;
+  await ffmpeg.writeFile(png, new Uint8Array(await (await canvasEnBlob(c)).arrayBuffer()));
+  const vid = EXT_VIDEO.includes(extDe(courant)) || extDe(courant) === "gif";
+  const debut = +e.debut || 0, fin = e.fin == null || e.fin === "" ? null : +e.fin;
+  const quand = vid && (debut > 0 || fin) ? `:enable='between(t,${debut},${fin ?? 99999})'` : "";
+  const out = `/e${i}.${vid ? "mp4" : extDe(courant) === "png" ? "png" : "jpg"}`;
+  const args = ["-i", courant, "-i", png, "-filter_complex", `[0:v][1:v]overlay=0:0${quand}`];
+  args.push(...(vid ? ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "23", "-pix_fmt", "yuv420p", "-c:a", "copy"] : ["-frames:v", "1", "-q:v", "2"]), out);
+  logs = [];
+  const code = await ffmpeg.exec(args);
+  try { await ffmpeg.deleteFile(png); } catch {}
+  if (code !== 0) throw Object.assign(new Error("texte"), { log: logs.slice(-15).join("\n") });
+  return out;
+}
+
+async function executerPlan(plan) {
+  let courant = "/in/" + fichiers[0].name;
+  const crees = [];
+  try {
+    for (let i = 0; i < plan.etapes.length; i++) {
+      const e = plan.etapes[i];
+      $("#journal").textContent += `\n${i + 1}/${plan.etapes.length} · ${e.description || e.type}…`;
+      progres(0.15 + 0.8 * (i / plan.etapes.length), `Étape ${i + 1}/${plan.etapes.length} : ${e.description || ""}`);
+      if (e.type === "texte") {
+        courant = await etapeTexte(courant, e, i);
+      } else {
+        const out = `/e${i}.${(e.ext || "mp4").replace(/^\./, "")}`;
+        const args = (e.args || []).map((a) => String(a)
+          .replaceAll("{in}", courant).replaceAll("{out}", out)
+          .replace(/\{in(\d+)\}/g, (m, n) => "/in/" + (fichiers[+n - 1] || fichiers[0]).name));
+        if (args[args.length - 1] !== out && !args.includes(out)) args.push(out);
+        logs = [];
+        const code = await ffmpeg.exec(args);
+        if (code !== 0) throw Object.assign(new Error("étape " + (i + 1)), { log: logs.slice(-15).join("\n") });
+        courant = out;
+      }
+      crees.push(courant);
+    }
+    const data = await ffmpeg.readFile(courant);
+    const ext = extDe(courant);
+    const type = ext === "gif" ? "image/gif" : ext === "png" ? "image/png" : ext === "jpg" || ext === "jpeg" ? "image/jpeg"
+      : ext === "m4a" ? "audio/mp4" : ext === "mp3" ? "audio/mpeg" : "video/mp4";
+    return { blob: new Blob([data.buffer], { type }), nom: nomSortie("montage", ext) };
+  } finally {
+    for (const n of crees) { try { await ffmpeg.deleteFile(n); } catch {} }
+  }
+}
+
+$("#faire").addEventListener("click", async () => {
+  const demande = $("#demande").value.trim();
+  if (!fichiers.length) return;
+  if (!demande) { $("#demande").focus(); return; }
+  $("#faire").disabled = true; $("#go").disabled = true;
+  $("#carte-go").hidden = false; $("#go").hidden = true;
+  $("#progression").hidden = false; $("#journal").textContent = "";
+  $("#carte-go").scrollIntoView({ behavior: "smooth" });
+  let monte = false;
+  try {
+    await chargerFFmpeg();
+    progres(0.08, "J'analyse ta vidéo…");
+    try { await ffmpeg.createDir("/in"); } catch {}
+    try { await ffmpeg.unmount("/in"); } catch {}
+    await ffmpeg.mount("WORKERFS", { files: fichiers }, "/in");   // lit le fichier sans tout charger en mémoire
+    monte = true;
+    const contexte = [];
+    for (const f of fichiers) {
+      const inf = await infos("/in/" + f.name);
+      contexte.push({ nom: f.name, type: estVideo(f) ? "video" : "photo", duree_s: +inf.duree.toFixed(2),
+        largeur: inf.larg, hauteur: inf.haut, son: inf.son, taille_mo: +(f.size / 1048576).toFixed(1) });
+    }
+    const info = { video: estVideo(fichiers[0]), son: contexte[0].son, duree: contexte[0].duree_s, larg: contexte[0].largeur, haut: contexte[0].hauteur };
+    progres(0.12, lireCle() ? "🧠 Je réfléchis à ta demande…" : "Je lis ta demande…");
+    let plan = lireCle() ? await planGemini(demande, contexte) : planLocal(demande, info);
+    $("#journal").textContent = "💬 " + (plan.resume || "");
+    if (!plan.etapes.length) { progres(0, "Rien à faire pour cette demande."); return; }
+    try {
+      resultat = await executerPlan(plan);
+    } catch (err) {
+      if (!lireCle() || !err.log) throw err;
+      // 2e essai : on renvoie l'erreur à Gemini pour qu'il corrige son plan
+      if (!ffmpeg) { await chargerFFmpeg(); try { await ffmpeg.createDir("/in"); } catch {} await ffmpeg.mount("WORKERFS", { files: fichiers }, "/in"); }
+      $("#journal").textContent += "\n⚠️ Petit souci, je corrige…";
+      plan = await planGemini(demande, contexte, err.log);
+      $("#journal").textContent += "\n💬 " + (plan.resume || "");
+      resultat = await executerPlan(plan);
+    }
+    afficherApercu($("#apercu-sortie"), resultat.blob);
+    $("#carte-resultat").hidden = false;
+    $("#carte-resultat").scrollIntoView({ behavior: "smooth" });
+    progres(1, "Terminé ✓");
+  } catch (err) {
+    console.error(err, err.log || "");
+    try { ffmpeg?.terminate(); } catch {}
+    ffmpeg = null; monte = false;
+    progres(0, "❌ " + (err.log ? "Le montage a échoué. Reformule, ou coupe la vidéo en plus court." : err.message || err));
+  } finally {
+    if (monte && ffmpeg) { try { await ffmpeg.unmount("/in"); } catch {} }
+    $("#faire").disabled = false; $("#go").disabled = false; $("#go").hidden = false;
+  }
+});

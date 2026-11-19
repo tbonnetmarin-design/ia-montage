@@ -33,6 +33,10 @@
   <!-- 2. action -->
   <section class="carte" id="carte-actions" hidden>
     <h2><span class="num">2</span> Qu'est-ce que tu veux ?</h2>
+    <textarea id="demande" rows="3" placeholder="Écris ce que tu veux… ex : « coupe de 0:10 à 1:30, accélère x1,5, noir et blanc, mets le texte “PARTIE 1” en haut pendant 3 secondes, format TikTok »"></textarea>
+    <button id="faire" class="bouton gros principal">✍️ Faire ce que j'ai écrit</button>
+    <p id="mode-ia" class="astuce"></p>
+    <p class="separateur">ou choisis une idée</p>
     <div id="actions" class="grille"></div>
     <div id="options"></div>
   </section>
@@ -43,6 +47,7 @@
     <div id="progression" hidden>
       <div class="barre"><div id="barre-int"></div></div>
       <p id="statut">Préparation…</p>
+      <p id="journal"></p>
     </div>
   </section>
 
@@ -54,6 +59,19 @@
     <button id="enchainer" class="bouton">🔁 Continuer à modifier ce résultat</button>
     <button id="recommencer" class="bouton">↩︎ Nouveau fichier</button>
   </section>
+
+  <details class="carte" id="reglages">
+    <summary>⚙️ Réglages — cerveau IA (Gemini, gratuit)</summary>
+    <p class="info">Pour comprendre tout ce que tu écris, l'appli utilise Gemini. Seul ton texte et les infos de la vidéo (durée, taille) sont envoyés à Google — <b>jamais ta vidéo</b>. Sans clé, l'appli comprend quand même les demandes simples.</p>
+    <ol class="info">
+      <li>Va sur <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> (compte Google).</li>
+      <li>« Create API key », copie la clé.</li>
+      <li>Colle-la ici. Elle reste uniquement dans ton téléphone.</li>
+    </ol>
+    <input id="cle" type="password" autocomplete="off" placeholder="Colle ta clé Gemini ici">
+    <button id="sauver-cle" class="bouton">Enregistrer la clé</button>
+    <p id="etat-cle" class="info"></p>
+  </details>
 
   <p class="aide">Bloqué ? Demande à Gemini 😉</p>
 </main>

@@ -44,6 +44,14 @@ h2 { font-size: 17px; margin: 0 0 12px; display: flex; align-items: center; gap:
 .barre { height: 8px; background: var(--bord); border-radius: 8px; overflow: hidden; margin-top: 14px; }
 #barre-int { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
 #statut { font-size: 14px; color: var(--gris); margin: 8px 0 0; }
+#demande, #cle { width: 100%; font: inherit; padding: 12px; border-radius: 12px; border: 1px solid var(--bord);
+  background: var(--fond); color: var(--texte); resize: vertical; }
+#cle { margin-top: 8px; }
+.separateur { text-align: center; color: var(--gris); font-size: 13px; margin: 16px 0 10px; }
+details.carte summary { font-weight: 600; cursor: pointer; }
+details.carte .info, details.carte ol { font-size: 13px; color: var(--gris); }
+details.carte a { color: var(--accent); }
+#journal { font-size: 13px; color: var(--gris); margin: 8px 0 0; white-space: pre-line; }
 .astuce { font-size: 12px; color: var(--gris); margin: 8px 0 0; text-align: center; }
 .aide { text-align: center; color: var(--gris); font-size: 13px; margin-top: 24px; }
 .damier { background: repeating-conic-gradient(#ccc 0 25%, #fff 0 50%) 0 0 / 16px 16px; }
