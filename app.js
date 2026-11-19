@@ -113,6 +113,10 @@ $("#go").addEventListener("click", async () => {
     progres(1, "Terminé ✓");
   } catch (err) {
     console.error(err);
+    if (ffmpeg && !/Écris|Choisis|Aucun silence/.test(err.message || "")) {
+      try { ffmpeg.terminate(); } catch {}
+      ffmpeg = null;
+    }
     progres(0, "❌ " + (err.message || err));
   } finally {
     $("#go").disabled = false;
@@ -347,7 +351,10 @@ async function executerVideo(action, f) {
   const code = await ffmpeg.exec(args);
   if (code !== 0) {
     console.warn(logs.slice(-20).join("\n"));
-    throw new Error("Le montage a échoué (vidéo trop lourde ? essaie « Alléger » d'abord).");
+    // après un plantage le moteur peut être inutilisable : on le recharge au prochain essai
+    try { ffmpeg.terminate(); } catch {}
+    ffmpeg = null;
+    throw new Error("Le montage a échoué. Vidéo trop longue ou abîmée ? Essaie « Couper » ou « Alléger » d'abord.");
   }
   const data = await ffmpeg.readFile(sortie);
   for (const n of [...fichiersTemp, sortie]) { try { await ffmpeg.deleteFile(n); } catch {} }

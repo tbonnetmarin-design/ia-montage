@@ -1,5 +1,5 @@
 // Garde l'appli et le moteur vidéo en mémoire pour qu'elle marche hors ligne.
-const CACHE = "ia-montage-v1";
+const CACHE = "ia-montage-v2";
 const FICHIERS = [
   "./", "index.html", "style.css", "app.js", "manifest.json", "icon-512.png",
   "lib/ffmpeg/index.js", "lib/ffmpeg/classes.js", "lib/ffmpeg/const.js", "lib/ffmpeg/errors.js",
