@@ -603,7 +603,11 @@ Règles :
 - Pour une photo (jpg/png) : sortie jpg ou png avec "-frames:v","1" (et "-q:v","2" pour un jpg de bonne qualité).
 - Vidéos longues : c'est lent sur téléphone (environ 2 à 4 fois la durée de la vidéo par passe) → fais TOUT en une seule étape ffmpeg dès que possible (un seul -filter_complex).
 - Garde le minimum d'étapes ; une seule étape ffmpeg avec plusieurs filtres est préférable quand c'est simple.
-- IMPORTANT : ffmpeg ne fait que du montage (couper, vitesse, couleurs, cadrage, texte, son, effets simples). Il ne peut PAS générer ou transformer le contenu de l'image : changer une coupe de cheveux, un visage, des vêtements, ajouter/enlever un objet ou une personne, changer le décor, animer une photo, etc. Pour ce genre de demande, ne renvoie JAMAIS une copie de la vidéo : mets "etapes": [] et explique dans "resume" que l'appli ne peut pas le faire, en proposant une alternative (effet/filtre dans Snapchat, TikTok, CapCut ou l'appli Gemini).
+- IMPORTANT : ffmpeg ne fait que du montage. Si la demande consiste à TRANSFORMER le contenu de l'image (coupe de cheveux, visage, maquillage, vêtements, ajouter/enlever un objet ou une personne, changer le décor, style dessin animé, animer une photo…), n'utilise pas ffmpeg : mets "etapes": [] et ajoute
+  "generatif": {"consigne_image": "instruction PRÉCISE en anglais pour modifier l'image en gardant tout le reste identique (même personne, même cadrage, même lumière)",
+                "moment_s": instant de la vidéo (en secondes) le plus représentatif à transformer (0 pour une photo),
+                "mouvement": "pour une vidéo seulement : description en anglais de l'action/du mouvement de la scène d'origine, pour recréer une courte vidéo animée"}
+  et dans "resume" explique ce que l'IA va transformer.
 - Si une demande a besoin d'un fichier non fourni (ex. une musique précise), ne l'invente pas : fais le reste et dis-le dans "resume" (l'utilisateur peut utiliser le bouton « Ajouter une musique »).
 - Réponds uniquement avec le JSON, sans texte autour.`;
 
@@ -631,8 +635,124 @@ async function planGemini(demande, contexte, erreur) {
   const j = await r.json();
   const t = (j.candidates?.[0]?.content?.parts || []).map((p) => p.text || "").join("");
   const plan = JSON.parse(t.replace(/^\s*```(?:json)?/, "").replace(/```\s*$/, ""));
-  if (!Array.isArray(plan.etapes)) throw new Error("Réponse de Gemini incompréhensible, reformule ta demande.");
+  if (!Array.isArray(plan.etapes)) plan.etapes = [];
+  if (!plan.etapes.length && !plan.generatif) throw new Error(plan.resume || "Réponse de Gemini incompréhensible, reformule ta demande.");
   return plan;
+}
+
+// =====================================================================
+// ===== IA GÉNÉRATIVE (transformer l'image : cheveux, visage, décor…) ==
+// =====================================================================
+const API = "https://generativelanguage.googleapis.com/v1beta";
+const blobVersBase64 = (b) => new Promise((ok, ko) => {
+  const r = new FileReader();
+  r.onload = () => ok(String(r.result).split(",")[1]);
+  r.onerror = ko;
+  r.readAsDataURL(b);
+});
+const base64VersBlob = (b64, type) => {
+  const bin = atob(b64), u = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+  return new Blob([u], { type });
+};
+
+function erreurGoogle(status, texte, quoi) {
+  if (status === 429 || /RESOURCE_EXHAUSTED|quota/i.test(texte))
+    return new Error(`Quota atteint pour ${quoi}. La version gratuite de la clé ne l'inclut peut-être pas : sur aistudio.google.com, active la facturation (Billing) du projet de ta clé, puis réessaie.`);
+  if (status === 400 && /billing|paid|FAILED_PRECONDITION/i.test(texte))
+    return new Error(`${quoi} demande d'activer la facturation sur le projet de ta clé (aistudio.google.com → Billing).`);
+  if (status === 400 || status === 403) return new Error(`Google refuse la demande (${quoi}) : ${texte.slice(0, 160)}`);
+  return new Error(`${quoi} indisponible (${status}) : ${texte.slice(0, 160)}`);
+}
+
+// Photo → photo modifiée (modèle d'image Gemini)
+async function geminiModifierImage(blob, consigne) {
+  const corps = JSON.stringify({
+    contents: [{ parts: [{ text: consigne }, { inlineData: { mimeType: blob.type || "image/jpeg", data: await blobVersBase64(blob) } }] }],
+    generationConfig: { responseModalities: ["TEXT", "IMAGE"] },
+  });
+  let r;
+  for (const m of ["gemini-2.5-flash-image", "gemini-2.5-flash-image-preview", "gemini-3-pro-image-preview"]) {
+    r = await fetch(`${API}/models/${m}:generateContent`, { method: "POST",
+      headers: { "content-type": "application/json", "x-goog-api-key": lireCle() }, body: corps });
+    if (r.status !== 404) break;
+  }
+  if (!r.ok) throw erreurGoogle(r.status, await r.text(), "l'IA image");
+  const j = await r.json();
+  const parts = j.candidates?.[0]?.content?.parts || [];
+  const img = parts.find((p) => p.inlineData?.data);
+  if (!img) {
+    const pourquoi = parts.map((p) => p.text || "").join(" ").trim() || j.candidates?.[0]?.finishReason || j.promptFeedback?.blockReason || "";
+    throw new Error("L'IA image n'a pas renvoyé d'image. " + (pourquoi ? "Raison : " + pourquoi.slice(0, 200) : "Reformule ta demande."));
+  }
+  return base64VersBlob(img.inlineData.data, img.inlineData.mimeType || "image/png");
+}
+
+// Image → courte vidéo animée (Veo) — payant chez Google
+async function veoDepuisImage(imageBlob, prompt, ratio) {
+  const corps = JSON.stringify({
+    instances: [{ prompt, image: { bytesBase64Encoded: await blobVersBase64(imageBlob), mimeType: imageBlob.type || "image/png" } }],
+    parameters: { aspectRatio: ratio },
+  });
+  let r;
+  for (const m of ["veo-3.1-fast-generate-preview", "veo-3.0-fast-generate-001", "veo-3.1-generate-preview", "veo-3.0-generate-001"]) {
+    r = await fetch(`${API}/models/${m}:predictLongRunning`, { method: "POST",
+      headers: { "content-type": "application/json", "x-goog-api-key": lireCle() }, body: corps });
+    if (r.status !== 404) break;
+  }
+  if (!r.ok) throw erreurGoogle(r.status, await r.text(), "l'IA vidéo (Veo)");
+  let op = await r.json();
+  const t0 = Date.now();
+  while (!op.done) {
+    if (Date.now() - t0 > 8 * 60 * 1000) throw new Error("L'IA vidéo met trop de temps, réessaie plus tard.");
+    const s = Math.round((Date.now() - t0) / 1000);
+    progres(Math.min(0.95, 0.55 + s / 400), `🎬 L'IA crée ta vidéo… ${s} s (souvent 1 à 3 min)`);
+    await new Promise((ok) => setTimeout(ok, 10000));
+    const p = await fetch(`${API}/${op.name}`, { headers: { "x-goog-api-key": lireCle() } });
+    if (!p.ok) throw erreurGoogle(p.status, await p.text(), "l'IA vidéo (Veo)");
+    op = await p.json();
+  }
+  if (op.error) throw new Error("L'IA vidéo a refusé : " + (op.error.message || "").slice(0, 200));
+  const rep = op.response?.generateVideoResponse || op.response || {};
+  if (rep.raiMediaFilteredReasons?.length) throw new Error("L'IA vidéo a bloqué le résultat : " + rep.raiMediaFilteredReasons.join(" "));
+  const uri = rep.generatedSamples?.[0]?.video?.uri || rep.videos?.[0]?.uri;
+  const b64 = rep.generatedSamples?.[0]?.video?.bytesBase64Encoded || rep.videos?.[0]?.bytesBase64Encoded;
+  if (b64) return base64VersBlob(b64, "video/mp4");
+  if (!uri) throw new Error("L'IA vidéo n'a pas renvoyé de vidéo.");
+  const v = await fetch(uri, { headers: { "x-goog-api-key": lireCle() } });
+  if (!v.ok) throw new Error("Impossible de télécharger la vidéo créée (" + v.status + ").");
+  return new Blob([await v.arrayBuffer()], { type: "video/mp4" });
+}
+
+async function executerGeneratif(plan, contexte) {
+  const g = plan.generatif || {};
+  const consigne = g.consigne_image || $("#demande").value;
+  const f = fichiers[0];
+  if (!estVideo(f)) {
+    progres(0.3, "🪄 L'IA transforme ta photo… (10-30 s)");
+    const blob = await geminiModifierImage(f, consigne);
+    return { blob, nom: nomSortie("ia", blob.type.includes("png") ? "png" : "jpg") };
+  }
+  // vidéo : 1) on prend une image de la vidéo, 2) on la transforme, 3) Veo recrée une courte vidéo
+  const inf = contexte[0];
+  const t = Math.max(0, Math.min(+g.moment_s || 0.5, Math.max(0, inf.duree_s - 0.1)));
+  progres(0.2, "J'extrais une image de ta vidéo…");
+  logs = [];
+  await ffmpeg.exec(["-ss", String(t), "-i", "/in/" + f.name, "-frames:v", "1", "-update", "1", "/image-ia.png"]);
+  const img = new Blob([(await ffmpeg.readFile("/image-ia.png")).buffer], { type: "image/png" });
+  try { await ffmpeg.deleteFile("/image-ia.png"); } catch {}
+  progres(0.35, "🪄 L'IA transforme l'image…");
+  const modifiee = await geminiModifierImage(img, consigne);
+  afficherApercu($("#apercu-sortie"), modifiee);
+  $("#carte-resultat").hidden = false;
+  const ratio = inf.hauteur > inf.largeur ? "9:16" : "16:9";
+  const ok = confirm("Voici l'image transformée (en bas).\n\nCréer maintenant une VIDÉO IA de ~8 s à partir d'elle ?\n" +
+    "⚠️ C'est l'IA vidéo de Google (Veo) : c'est PAYANT sur le compte de ta clé (environ 1 à 4 € la vidéo selon les tarifs Google) et il faut que la facturation soit activée.\n\n" +
+    "OK = créer la vidéo · Annuler = garder seulement l'image");
+  if (!ok) return { blob: modifiee, nom: nomSortie("ia", "png") };
+  const prompt = (g.mouvement ? g.mouvement + ". " : "") + "Keep the same person, framing, lighting and style as the image. " + consigne;
+  const video = await veoDepuisImage(modifiee, prompt, ratio);
+  return { blob: video, nom: nomSortie("ia", "mp4") };
 }
 
 // --- mode simple (sans clé / sans internet) ---
@@ -645,7 +765,7 @@ function planLocal(demande, info) {
   const A = son ? ["-c:a", "aac", "-b:a", "128k"] : ["-an"];
   const etapes = [], fait = [];
   const ff = (description, args, ext) => etapes.push({ type: "ffmpeg", description, args, ext: ext || (vid ? "mp4" : "jpg") });
-  const sortieImg = vid ? [] : ["-frames:v", "1", "-q:v", "2"];
+  const sortieImg = vid ? [] : ["-frames:v", "1", "-update", "1", "-q:v", "2"];
   const grand = vid && (info.duree > 60 || Math.max(info.larg, info.haut) > 1280);
   const reduire = grand ? `scale='if(gt(iw,ih),min(1280,iw),-2)':'if(gt(iw,ih),-2,min(1280,ih))',` : "";
 
@@ -717,7 +837,7 @@ function planLocal(demande, info) {
     fait.push("GIF");
   }
   return { resume: etapes.length ? "Je fais : " + fait.join(", ") + "." :
-    "Je n'ai pas compris en mode simple. Ajoute ta clé Gemini (⚙️ Réglages) pour que je comprenne tout, ou utilise les idées en dessous.", etapes };
+    "Je n'ai pas compris en mode simple. Ajoute ta clé Gemini (⚙️ Réglages) pour que je comprenne tout — y compris les transformations IA (cheveux, visage, décor…) — ou utilise les idées en dessous.", etapes };
 }
 
 // --- exécution d'un plan ---
@@ -800,6 +920,14 @@ $("#faire").addEventListener("click", async () => {
     progres(0.12, lireCle() ? "🧠 Je réfléchis à ta demande…" : "Je lis ta demande…");
     let plan = lireCle() ? await planGemini(demande, contexte) : planLocal(demande, info);
     $("#journal").textContent = "💬 " + (plan.resume || "");
+    if (plan.generatif) {
+      resultat = await executerGeneratif(plan, contexte);
+      afficherApercu($("#apercu-sortie"), resultat.blob);
+      $("#carte-resultat").hidden = false;
+      $("#carte-resultat").scrollIntoView({ behavior: "smooth" });
+      progres(1, "Terminé ✓ — tu peux continuer le montage avec « Continuer à modifier ».");
+      return;
+    }
     if (!plan.etapes.length) { progres(0, "Rien à faire pour cette demande — lis l'explication ci-dessous."); return; }
     try {
       resultat = await executerPlan(plan);
