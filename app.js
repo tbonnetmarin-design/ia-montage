@@ -724,13 +724,44 @@ async function veoDepuisImage(imageBlob, prompt, ratio) {
   return new Blob([await v.arrayBuffer()], { type: "video/mp4" });
 }
 
+// Plan B gratuit : on envoie la photo + la demande dans l'appli Gemini (incluse dans l'abonnement)
+async function envoyerVersGemini(imageBlob, demande) {
+  const texte = demande + "\n(Garde exactement la même personne, le même cadrage et la même lumière.)";
+  try { await navigator.clipboard.writeText(texte); } catch {}
+  const f = new File([imageBlob], "photo.png", { type: imageBlob.type || "image/png" });
+  // bouton à toucher (iOS exige un vrai toucher pour ouvrir le menu de partage)
+  document.querySelector("#vers-gemini")?.remove();
+  const b = document.createElement("button");
+  b.id = "vers-gemini";
+  b.className = "bouton gros principal";
+  b.textContent = "📤 Faire la transformation dans l'appli Gemini (gratuit)";
+  b.onclick = async () => {
+    try { await navigator.clipboard.writeText(texte); } catch {}
+    if (navigator.canShare && navigator.canShare({ files: [f] })) {
+      try { await navigator.share({ files: [f], text: texte }); } catch {}
+    } else {
+      const a = document.createElement("a"); a.href = URL.createObjectURL(f); a.download = "photo.png"; a.click();
+    }
+  };
+  $("#progression").appendChild(b);
+  throw new Error("La clé gratuite ne permet pas la transformation IA. Touche le bouton ci-dessous → choisis « Gemini » → colle ta demande (déjà copiée) et envoie. Pour une vidéo, demande ensuite à Gemini « fais-en une vidéo ».");
+}
+
+async function geminiOuPlanB(img, consigne) {
+  try { return await geminiModifierImage(img, consigne); }
+  catch (e) {
+    if (/Quota|facturation|Billing/i.test(e.message)) await envoyerVersGemini(img, $("#demande").value || consigne);
+    throw e;
+  }
+}
+
 async function executerGeneratif(plan, contexte) {
   const g = plan.generatif || {};
   const consigne = g.consigne_image || $("#demande").value;
   const f = fichiers[0];
   if (!estVideo(f)) {
     progres(0.3, "🪄 L'IA transforme ta photo… (10-30 s)");
-    const blob = await geminiModifierImage(f, consigne);
+    const blob = await geminiOuPlanB(f, consigne);
     return { blob, nom: nomSortie("ia", blob.type.includes("png") ? "png" : "jpg") };
   }
   // vidéo : 1) on prend une image de la vidéo, 2) on la transforme, 3) Veo recrée une courte vidéo
@@ -742,7 +773,7 @@ async function executerGeneratif(plan, contexte) {
   const img = new Blob([(await ffmpeg.readFile("/image-ia.png")).buffer], { type: "image/png" });
   try { await ffmpeg.deleteFile("/image-ia.png"); } catch {}
   progres(0.35, "🪄 L'IA transforme l'image…");
-  const modifiee = await geminiModifierImage(img, consigne);
+  const modifiee = await geminiOuPlanB(img, consigne);
   afficherApercu($("#apercu-sortie"), modifiee);
   $("#carte-resultat").hidden = false;
   const ratio = inf.hauteur > inf.largeur ? "9:16" : "16:9";
