@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Mon IA Montage</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="IA Montage">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0A0A0A">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-512.png">
+<link rel="icon" href="icon-512.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>Mon IA Montage</h1>
+  <p class="sous">Tout se fait dans ton téléphone. Rien n'est envoyé.</p>
+</header>
+
+<main>
+  <!-- 1. fichier -->
+  <section class="carte">
+    <h2><span class="num">1</span> Choisis ta photo ou ta vidéo</h2>
+    <label class="bouton gros" for="fichier">📁 Choisir dans ma pellicule</label>
+    <input id="fichier" type="file" accept="image/*,video/*" hidden>
+    <div id="apercu-entree" class="apercu"></div>
+  </section>
+
+  <!-- 2. action -->
+  <section class="carte" id="carte-actions" hidden>
+    <h2><span class="num">2</span> Qu'est-ce que tu veux ?</h2>
+    <div id="actions" class="grille"></div>
+    <div id="options"></div>
+  </section>
+
+  <!-- 3. go -->
+  <section class="carte" id="carte-go" hidden>
+    <button id="go" class="bouton gros principal">✨ Lancer</button>
+    <div id="progression" hidden>
+      <div class="barre"><div id="barre-int"></div></div>
+      <p id="statut">Préparation…</p>
+    </div>
+  </section>
+
+  <!-- 4. résultat -->
+  <section class="carte" id="carte-resultat" hidden>
+    <h2><span class="num">3</span> C'est prêt !</h2>
+    <div id="apercu-sortie" class="apercu"></div>
+    <button id="enregistrer" class="bouton gros principal">💾 Enregistrer / Partager</button>
+    <button id="enchainer" class="bouton">🔁 Continuer à modifier ce résultat</button>
+    <button id="recommencer" class="bouton">↩︎ Nouveau fichier</button>
+  </section>
+
+  <p class="aide">Bloqué ? Demande à Gemini 😉</p>
+</main>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
